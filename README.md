@@ -25,7 +25,7 @@ pip install flask requests pillow gunicorn
 Before starting the service, configure the model API key.
 
 ```bash
-export API_KEY="your_api_key"
+export GALAXY_DECOMPOSITION_API_KEY="your_api_key"
 ```
 
 Optional configuration:

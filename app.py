@@ -30,7 +30,7 @@ from parse_response import parse_llm_response
 TZ = timezone(timedelta(hours=8))
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api2.road2all.com/v1/chat/completions")
-API_KEY = os.getenv("API_KEY")  # 必须通过环境变量注入
+API_KEY = os.getenv("GALAXY_DECOMPOSITION_API_KEY")  # 必须通过环境变量注入
 MODEL_NAME = os.getenv("MODEL_NAME", "claude-3-7-sonnet-20250219")
 
 HOST = os.getenv("HOST", "10.15.48.208")
