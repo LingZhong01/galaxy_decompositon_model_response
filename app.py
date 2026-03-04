@@ -44,12 +44,12 @@ RETRY_BACKOFF_SECONDS = float(os.getenv("RETRY_BACKOFF_SECONDS", "2"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(3 * 1024 * 1024)))
 
 # 日志目录
-LOG_ROOT = os.getenv("SERVICE_LOG_PATH", "service")
-LOG_DIR = os.path.join(LOG_ROOT, "model_log")
+LOG_ROOT = os.getenv("SERVICE_LOG_PATH", ".")
+LOG_DIR = os.path.join(LOG_ROOT, "model_response_logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 SERVICE_START_TIME = datetime.now(TZ)
-LOG_FILENAME = f"log_{SERVICE_START_TIME.strftime('%Y%m%d_%H%M%S')}.jsonl"
+LOG_FILENAME = f"log_{SERVICE_START_TIME.strftime('%Y%m%d_%H%M%S')}.log"
 LOG_PATH = os.path.join(LOG_DIR, LOG_FILENAME)
 
 _log_lock = threading.Lock()
