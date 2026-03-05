@@ -31,9 +31,11 @@ TZ = timezone(timedelta(hours=8))
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api2.road2all.com/v1/chat/completions")
 API_KEY = os.getenv("GALAXY_DECOMPOSITION_API_KEY")  # 必须通过环境变量注入
+if not API_KEY:
+    raise RuntimeError("GALAXY_DECOMPOSITION_API_KEY env not set")
 MODEL_NAME = os.getenv("MODEL_NAME", "claude-3-7-sonnet-20250219")
 
-HOST = os.getenv("HOST", "10.15.48.208")
+HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "5000"))
 
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "3"))
@@ -114,68 +116,132 @@ def append_service_log(
 # =========================
 # Prompt builder (keep your original)
 # =========================
-def build_single_fit_eval_prompt(text: str, round_id: int, fitting_mode: str) -> str:
+def build_single_fit_eval_prompt(
+        text: str,
+        round_id: int,
+        fitting_mode: str,
+):
     SED_IMAGE_BLOCK = """
-The second input image illustrates the fitting performance of the SED model, particularly highlighting the black and red data points shown in the chart.
-""".strip()
-
+    The second input image illustrates the fitting performance of the SED model, particularly highlighting the black and red data points shown in the chart.
+    """
     SED_INSPECTION_BLOCK = """
-SED plot:
-- Check whether model points are close to observed points overall
-- Check whether systematic offsets exist across wavelengths
-""".strip()
+    SED plot:
+    - Check whether model points are close to observed points overall
+    - Check whether systematic offsets exist across wavelengths
+    """
 
     BASE_PROMPT = """
-You are an astronomer experienced in galaxy component decomposition. Your task is to evaluate whether the current fitting result is physically reasonable.
+    You are an astronomer experienced in galaxy component decomposition. Your task is to evaluate whether the current fitting result is physically reasonable.
 
-# Workflow Context - Four-Stage Strategy
-The GalfitS fitting process follows a sequential four-stage approach. You MUST identify which phase the user is currently in before providing recommendations:
+    # Workflow Context - Four-Stage Strategy
+    The GalfitS fitting process follows a sequential four-stage approach. You MUST identify which phase the user is currently in before providing recommendations:
 
-1. Stage 1 (Image Fitting): Fit multi-band images WITHOUT SED constraints.
-2. Stage 2 (Mass Guess): Single Sérsic Mass Estimation
-3. Stage 3 (SED Fitting): Fix image parameters from Stage 1; fit ONLY SED parameters.
-4. Stage 4 (Image-SED Fitting): Use results from Stage 1 & 3 as initial guesses; relax ALL parameters.
+    1.  Stage 1 (Image Fitting): Fit multi-band images WITHOUT SED constraints.
+        *   Goal: Get morphology parameters right first.
+        *   Action scope: Adjust image components, centers, shapes.
 
-You are given the fitting result of a galaxy from Round {round_id}. The fitting mode of this round is {fitting_mode}.
+    2.  Stage 2 (Mass Guess): Single Sérsic Mass Estimation
+        *   Goal: Estimate the total stellar mass using a single Sérsic model.
+        *   Action scope: Fit one global Sérsic model.
 
-The input image contains three panels:
-- Left: original cutout image
-- Middle: fitted model image
-- Right: residual image (data - model)
+    3.  Stage 3 (SED Fitting): Fix image parameters from Stage 1; fit ONLY SED parameters.
+        *   Goal: Get the spectral energy distribution right.
+        *   Action scope: Adjust SED fluxes, colors ONLY. Do NOT touch morphology.
 
-{SED_IMAGE_OPTION}
+    4.  Stage 4 (Image-SED Fitting): Use results from Stage 1 & 3 as initial guesses; relax ALL parameters for final joint fitting.
+        *   Goal: Simultaneous refinement of image + SED.
+        *   Action scope: Any parameter can be adjusted.
 
-You are also given the fitted parameter file below.
+    You are given the fitting result of a galaxy from Round {round_id}. The fitting mode of this round is {fitting_mode}. 
 
-====================
-FITTED PARAMETERS
-====================
-{text}
-====================
+    The input image contains three panels:
+    - Left: original cutout image
+    - Middle: fitted model image
+    - Right: residual image (data - model)
+    
+    {SED_IMAGE_OPTION}
 
-Please strictly follow the output format below.
+    You are also given the fitted parameter file below.
 
-Step 1: Overall Judgment
-- "Good Fit" or "Bad Fit"
+    ====================
+    FITTED PARAMETERS
+    ====================
+    {text}
+    ====================
 
-Step 2: Observed Statistical Problems
+    Please strictly follow the output format below.
 
-Step 3: Observed Image Problems
+    Step 1: Overall Judgment
+    Based on both the Statistical Metrics and Visual Inspection of the fitted parameters, answer with only one of the following:
+    - "Good Fit"
+    - "Bad Fit"
 
-Step 4: Next-Step Decision
-(choose actions based on fitting_mode constraints)
+    Statistical Metrics
+    - Whether the reduced chi-square is within a reasonable range
+    - Whether BIC indicates a better model (if comparison exists)
+    - Whether the fitting process has converged
 
-Step 5: Reasons for Decision
-""".strip()
+    Visual Inspection
+    Residual images:
+    - Check whether there are obvious remaining structures (e.g., central excess, rings, bars, asymmetric patterns)
+    {SED_INSPECTION_OPTION}
+    Parameters:
+    - Check whether parameters are physically reasonable
+    - Check if parameters are close to min/max limits
+
+    Step 2: Observed Statistical Problems  
+    If the fit is good, briefly explain why the fit is acceptable in terms of Statistical Metrics.
+
+    If the fit is bad, identify the evidence from the aspects of Statistical Metrics.
+
+    Step 3: Observed Image Problems
+    If the fit is good, briefly explain why the fit is acceptable in terms of Visual Inspection.
+
+    If the fit is bad, identify the evidence from the aspects of Visual Inspection.
+
+    Step 4: Next-Step Decision
+    If the fit is good, say 'No further action needed as the fit is already good'.
+
+    If the fit is bad, choose **at least one action** to address the problems identified above.
+
+        - If the fitting mode is **Image Fitting**, you may choose from all options:
+          A. Add a PSF component
+          B. Add a bulge-like Sérsic component
+          C. Add a disk-like Sérsic component
+          D. Add a bar-like Sérsic component
+          E. Add a ring component
+          F. Add spiral structure modeling
+          G. Remove or simplify a component
+          H. Adjust existing component parameters
+          I. Stop fitting
+          J. Ready for next stage
+        
+        - If the fitting mode is **not Image Fitting** (e.g., SED Fitting, Image-SED Fitting), you may **only choose from these options**:
+          H. Adjust existing component parameters
+          I. Stop fitting
+          J. Ready for next stage
+
+    Step 5: Reasons for Decision
+    Provide brief physical or modeling reasons that directly justifies the Step 4 decision.
+
+    Optionally, you may include specific refinement suggestions if it directly follows from the main reason.
+
+    Do NOT:
+    - Repeat statistical evidence from Step 2
+    - Repeat full visual analysis from Step 3
+    """
 
     use_sed = fitting_mode not in ["Image Fitting", "Mass Guess"]
 
-    return BASE_PROMPT.format(
+    prompt = BASE_PROMPT.format(
         round_id=round_id,
         fitting_mode=fitting_mode,
         text=text,
         SED_IMAGE_OPTION=SED_IMAGE_BLOCK if use_sed else "",
+        SED_INSPECTION_OPTION=SED_INSPECTION_BLOCK if use_sed else ""
     )
+
+    return prompt.strip()
 
 
 # =========================
